@@ -11,7 +11,12 @@ public class Account : ITenantOwned
     public AccountType Type { get; set; }
     public string Currency { get; set; } = "INR";
     public decimal OpeningBalance { get; set; }
+    public decimal OpeningBalanceBaseAmount { get; set; }
+    public decimal? OpeningBalanceFxRateUsed { get; set; }
     public int? BillingCycleDay { get; set; }
     public int? DueDay { get; set; }
+    public decimal BilledAmount { get; set; }
+    public decimal UnbilledAmount { get; set; }
+    public DateOnly? LastStatementDate { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }

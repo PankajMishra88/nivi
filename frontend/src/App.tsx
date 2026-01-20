@@ -40,8 +40,13 @@ type Account = {
   type: 'Asset' | 'Liability' | 'CreditCard'
   currency: string
   openingBalance: number
+  openingBalanceBaseAmount: number
+  openingBalanceFxRateUsed?: number | null
   billingCycleDay?: number
   dueDay?: number
+  billedAmount: number
+  unbilledAmount: number
+  lastStatementDate?: string | null
 }
 
 type Transaction = {
@@ -65,6 +70,28 @@ type Transaction = {
   fxRateUsed?: number | null
 }
 
+type AccountBalance = {
+  id: string
+  entityId: string
+  name: string
+  type: Account['type']
+  currency: string
+  openingBalance: number
+  openingBalanceBaseAmount: number
+  postedDeltaBaseAmount: number
+  currentBalanceBaseAmount: number
+  billedAmount: number
+  unbilledAmount: number
+}
+
+type FxRate = {
+  id: string
+  date: string
+  baseCurrency: string
+  quoteCurrency: string
+  rate: number
+}
+
 const defaultLoginState = {
   tenantSlug: '',
   email: '',
@@ -84,7 +111,9 @@ function App() {
   const [groups, setGroups] = useState<Group[]>([])
   const [entities, setEntities] = useState<Entity[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [fxRates, setFxRates] = useState<FxRate[]>([])
 
   const [newGroupName, setNewGroupName] = useState('')
   const [entityForm, setEntityForm] = useState({
@@ -98,8 +127,15 @@ function App() {
     type: 'Asset' as Account['type'],
     currency: 'INR',
     openingBalance: '',
+    openingBalanceFxRateUsed: '',
     billingCycleDay: '',
     dueDay: '',
+  })
+  const [fxRateForm, setFxRateForm] = useState({
+    date: new Date().toISOString().slice(0, 10),
+    baseCurrency: 'INR',
+    quoteCurrency: '',
+    rate: '',
   })
   const [transactionForm, setTransactionForm] = useState({
     entityId: '',
@@ -134,6 +170,11 @@ function App() {
           setSelectedEntityId(entitiesResponse[0].id)
         }
       })
+      .then(() =>
+        apiRequest<FxRate[]>('/api/fx-rates', {}, token)
+          .then(setFxRates)
+          .catch(() => undefined),
+      )
       .catch((error: Error) => setStatusMessage(error.message))
   }, [token, selectedEntityId])
 
@@ -151,6 +192,20 @@ function App() {
       .catch((error: Error) => setStatusMessage(error.message))
   }, [token, selectedEntityId])
 
+  useEffect(() => {
+    if (!token || !selectedEntityId) {
+      return
+    }
+
+    apiRequest<AccountBalance[]>(
+      `/api/accounts/balances?entityId=${selectedEntityId}`,
+      {},
+      token,
+    )
+      .then(setAccountBalances)
+      .catch((error: Error) => setStatusMessage(error.message))
+  }, [token, selectedEntityId])
+
   const chartData = useMemo(() => {
     const totals = new Map<string, number>()
     transactions.forEach((tx) => {
@@ -161,6 +216,10 @@ function App() {
       total,
     }))
   }, [transactions])
+
+  const balanceLookup = useMemo(() => {
+    return new Map(accountBalances.map((balance) => [balance.id, balance]))
+  }, [accountBalances])
 
   const handleLogin = async () => {
     setLoginError(null)
@@ -219,6 +278,9 @@ function App() {
     const payload = {
       ...accountForm,
       openingBalance: Number(accountForm.openingBalance || 0),
+      openingBalanceFxRateUsed: accountForm.openingBalanceFxRateUsed
+        ? Number(accountForm.openingBalanceFxRateUsed)
+        : null,
       billingCycleDay: accountForm.billingCycleDay
         ? Number(accountForm.billingCycleDay)
         : null,
@@ -233,7 +295,12 @@ function App() {
       token ?? undefined,
     )
     setAccounts((prev) => [...prev, created])
-    setAccountForm((prev) => ({ ...prev, name: '', openingBalance: '' }))
+    setAccountForm((prev) => ({
+      ...prev,
+      name: '',
+      openingBalance: '',
+      openingBalanceFxRateUsed: '',
+    }))
   }
 
   const handleCreateTransaction = async () => {
@@ -257,6 +324,32 @@ function App() {
     )
     setTransactions((prev) => [created, ...prev])
     setTransactionForm((prev) => ({ ...prev, originalAmount: '', fxRateUsed: '' }))
+    if (selectedEntityId) {
+      apiRequest<AccountBalance[]>(
+        `/api/accounts/balances?entityId=${selectedEntityId}`,
+        {},
+        token ?? undefined,
+      )
+        .then(setAccountBalances)
+        .catch(() => undefined)
+    }
+  }
+
+  const handleCreateFxRate = async () => {
+    const payload = {
+      ...fxRateForm,
+      rate: Number(fxRateForm.rate || 0),
+    }
+    const created = await apiRequest<FxRate>(
+      '/api/fx-rates',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token ?? undefined,
+    )
+    setFxRates((prev) => [created, ...prev])
+    setFxRateForm((prev) => ({ ...prev, quoteCurrency: '', rate: '' }))
   }
 
   if (!token) {
@@ -525,6 +618,17 @@ function App() {
                   }))
                 }
               />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Opening balance FX rate (if non-base)"
+                value={accountForm.openingBalanceFxRateUsed}
+                onChange={(event) =>
+                  setAccountForm((prev) => ({
+                    ...prev,
+                    openingBalanceFxRateUsed: event.target.value,
+                  }))
+                }
+              />
               <div className="grid gap-3 sm:grid-cols-2">
                 <input
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -748,7 +852,89 @@ function App() {
                   key={account.id}
                   className="rounded-lg border border-slate-200 px-3 py-2"
                 >
-                  {account.name} · {account.currency} · {account.type}
+                  <div className="font-medium text-slate-700">{account.name}</div>
+                  <div className="text-xs text-slate-500">
+                    {account.currency} · {account.type}
+                  </div>
+                  {balanceLookup.has(account.id) ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      Balance (base):{' '}
+                      {balanceLookup
+                        .get(account.id)
+                        ?.currentBalanceBaseAmount.toFixed(2)}
+                    </div>
+                  ) : null}
+                  {account.type === 'CreditCard' ? (
+                    <div className="mt-1 text-xs text-slate-500">
+                      Billed: {account.billedAmount.toFixed(2)} · Unbilled:{' '}
+                      {account.unbilledAmount.toFixed(2)}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">
+              FX Rates
+            </h2>
+            <div className="mt-4 grid gap-2 text-sm">
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                type="date"
+                value={fxRateForm.date}
+                onChange={(event) =>
+                  setFxRateForm((prev) => ({ ...prev, date: event.target.value }))
+                }
+              />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <input
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Base currency"
+                  value={fxRateForm.baseCurrency}
+                  onChange={(event) =>
+                    setFxRateForm((prev) => ({
+                      ...prev,
+                      baseCurrency: event.target.value,
+                    }))
+                  }
+                />
+                <input
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Quote currency"
+                  value={fxRateForm.quoteCurrency}
+                  onChange={(event) =>
+                    setFxRateForm((prev) => ({
+                      ...prev,
+                      quoteCurrency: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Rate"
+                value={fxRateForm.rate}
+                onChange={(event) =>
+                  setFxRateForm((prev) => ({ ...prev, rate: event.target.value }))
+                }
+              />
+              <button
+                className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
+                onClick={handleCreateFxRate}
+              >
+                Save FX rate
+              </button>
+            </div>
+            <ul className="mt-4 space-y-2 text-xs text-slate-600">
+              {fxRates.slice(0, 5).map((rate) => (
+                <li
+                  key={rate.id}
+                  className="rounded-lg border border-slate-200 px-3 py-2"
+                >
+                  {rate.date} · {rate.baseCurrency}/{rate.quoteCurrency} ·{' '}
+                  {rate.rate}
                 </li>
               ))}
             </ul>

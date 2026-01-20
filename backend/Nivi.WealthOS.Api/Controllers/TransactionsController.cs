@@ -21,6 +21,7 @@ public class TransactionsController : ControllerBase
     private readonly ICurrentUserContext _currentUser;
     private readonly RbacService _rbacService;
     private readonly TransactionRules _transactionRules;
+    private readonly CreditCardBalanceService _creditCardBalanceService;
     private readonly IAuditLogger _auditLogger;
 
     public TransactionsController(
@@ -28,12 +29,14 @@ public class TransactionsController : ControllerBase
         ICurrentUserContext currentUser,
         RbacService rbacService,
         TransactionRules transactionRules,
+        CreditCardBalanceService creditCardBalanceService,
         IAuditLogger auditLogger)
     {
         _dbContext = dbContext;
         _currentUser = currentUser;
         _rbacService = rbacService;
         _transactionRules = transactionRules;
+        _creditCardBalanceService = creditCardBalanceService;
         _auditLogger = auditLogger;
     }
 
@@ -133,20 +136,52 @@ public class TransactionsController : ControllerBase
 
         var baseCurrency = tenant.BaseCurrency;
         var originalCurrency = request.OriginalCurrency.Trim().ToUpperInvariant();
+        var fxRateUsed = request.FxRateUsed;
 
-        var computation = _transactionRules.ValidateAndCompute(
-            request.Type,
-            request.FromAccountId,
-            request.ToAccountId,
-            baseCurrency,
-            originalCurrency,
-            request.OriginalAmount,
-            request.FxRateUsed,
-            request.AdjustmentReason);
+        if (string.IsNullOrWhiteSpace(originalCurrency))
+        {
+            return BadRequest("Original currency is required.");
+        }
+
+        if (!originalCurrency.Equals(baseCurrency, StringComparison.OrdinalIgnoreCase) && !fxRateUsed.HasValue)
+        {
+            var storedRate = await _dbContext.FxRates.FirstOrDefaultAsync(rate =>
+                rate.Date == request.Date &&
+                rate.BaseCurrency == baseCurrency &&
+                rate.QuoteCurrency == originalCurrency);
+
+            if (storedRate == null)
+            {
+                return BadRequest("FX rate required or stored rate missing for date.");
+            }
+
+            fxRateUsed = storedRate.Rate;
+        }
+
+        TransactionComputation computation;
+        try
+        {
+            computation = _transactionRules.ValidateAndCompute(
+                request.Type,
+                request.FromAccountId,
+                request.ToAccountId,
+                baseCurrency,
+                originalCurrency,
+                request.OriginalAmount,
+                fxRateUsed,
+                request.AdjustmentReason);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        Account? fromAccount = null;
+        Account? toAccount = null;
 
         if (request.FromAccountId.HasValue)
         {
-            var fromAccount = await _dbContext.Accounts.FirstOrDefaultAsync(a => a.Id == request.FromAccountId.Value);
+            fromAccount = await _dbContext.Accounts.FirstOrDefaultAsync(a => a.Id == request.FromAccountId.Value);
             if (fromAccount == null || fromAccount.EntityId != request.EntityId)
             {
                 return BadRequest("Invalid from account.");
@@ -155,7 +190,7 @@ public class TransactionsController : ControllerBase
 
         if (request.ToAccountId.HasValue)
         {
-            var toAccount = await _dbContext.Accounts.FirstOrDefaultAsync(a => a.Id == request.ToAccountId.Value);
+            toAccount = await _dbContext.Accounts.FirstOrDefaultAsync(a => a.Id == request.ToAccountId.Value);
             if (toAccount == null || toAccount.EntityId != request.EntityId)
             {
                 return BadRequest("Invalid to account.");
@@ -189,6 +224,20 @@ public class TransactionsController : ControllerBase
         };
 
         _dbContext.Transactions.Add(transaction);
+
+        if (transaction.Status == TransactionStatus.Posted)
+        {
+            if (fromAccount != null && transaction.Type == TransactionType.Expense)
+            {
+                _creditCardBalanceService.ApplyExpense(fromAccount, transaction.BaseAmount);
+            }
+
+            if (toAccount != null && transaction.Type == TransactionType.Transfer)
+            {
+                _creditCardBalanceService.ApplyPayment(toAccount, transaction.BaseAmount);
+            }
+        }
+
         await _dbContext.SaveChangesAsync();
         await _auditLogger.LogAsync("transaction.created", _currentUser.UserId.Value, _dbContext.TenantId!.Value, "Transaction", transaction.Id);
 

@@ -48,6 +48,10 @@ builder.Services.AddScoped<RecoveryCodeService>();
 builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<RbacService>();
 builder.Services.AddScoped<TransactionRules>();
+builder.Services.AddScoped<CurrencyConversionService>();
+builder.Services.AddScoped<AccountBalanceService>();
+builder.Services.AddScoped<CreditCardBalanceService>();
+builder.Services.AddScoped<CreditCardBillingJob>();
 builder.Services.AddScoped<AttachmentStorageService>();
 builder.Services.AddScoped<IAuditLogger, AuditLogger>();
 
@@ -141,5 +145,10 @@ app.UseMiddleware<TenantContextMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
+
+RecurringJob.AddOrUpdate<CreditCardBillingJob>(
+    "credit-card-billing",
+    job => job.RunAsync(),
+    Cron.Daily);
 
 app.Run();

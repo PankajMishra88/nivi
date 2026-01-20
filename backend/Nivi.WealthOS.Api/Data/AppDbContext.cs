@@ -81,6 +81,10 @@ public class AppDbContext : DbContext
             entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(40);
             entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
             entity.Property(x => x.OpeningBalance).HasPrecision(18, 2);
+            entity.Property(x => x.OpeningBalanceBaseAmount).HasPrecision(18, 2);
+            entity.Property(x => x.OpeningBalanceFxRateUsed).HasPrecision(18, 6);
+            entity.Property(x => x.BilledAmount).HasPrecision(18, 2);
+            entity.Property(x => x.UnbilledAmount).HasPrecision(18, 2);
             entity.HasIndex(x => new { x.TenantId, x.EntityId });
             entity.HasIndex(x => new { x.TenantId, x.Currency });
         });
