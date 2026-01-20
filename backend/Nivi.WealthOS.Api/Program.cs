@@ -52,6 +52,13 @@ builder.Services.AddScoped<CurrencyConversionService>();
 builder.Services.AddScoped<AccountBalanceService>();
 builder.Services.AddScoped<CreditCardBalanceService>();
 builder.Services.AddScoped<CreditCardBillingJob>();
+builder.Services.AddScoped<QuietHoursService>();
+builder.Services.AddScoped<NotificationRecipientService>();
+builder.Services.AddScoped<ReminderService>();
+builder.Services.AddScoped<ReminderScanJob>();
+builder.Services.AddScoped<SmtpSettingsService>();
+builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<NotificationDispatchJob>();
 builder.Services.AddScoped<AttachmentStorageService>();
 builder.Services.AddScoped<IAuditLogger, AuditLogger>();
 
@@ -150,5 +157,15 @@ RecurringJob.AddOrUpdate<CreditCardBillingJob>(
     "credit-card-billing",
     job => job.RunAsync(),
     Cron.Daily);
+
+RecurringJob.AddOrUpdate<ReminderScanJob>(
+    "reminder-scan",
+    job => job.RunAsync(),
+    Cron.Daily);
+
+RecurringJob.AddOrUpdate<NotificationDispatchJob>(
+    "notification-dispatch",
+    job => job.RunAsync(),
+    "*/10 * * * *");
 
 app.Run();

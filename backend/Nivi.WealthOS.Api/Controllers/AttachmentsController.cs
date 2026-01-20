@@ -15,6 +15,8 @@ namespace Nivi.WealthOS.Api.Controllers;
 public class AttachmentsController : ControllerBase
 {
     private const string TransactionObjectType = "transactions";
+    private const string LoanObjectType = "loans";
+    private const string InsurancePolicyObjectType = "insurance_policies";
 
     private readonly AppDbContext _dbContext;
     private readonly ICurrentUserContext _currentUser;
@@ -79,6 +81,90 @@ public class AttachmentsController : ControllerBase
             attachment.UploadedAtUtc));
     }
 
+    [HttpPost("loans/{loanId:guid}/attachments")]
+    public async Task<ActionResult<AttachmentResponse>> UploadLoanAttachment(Guid loanId, IFormFile file, CancellationToken cancellationToken)
+    {
+        if (!_currentUser.UserId.HasValue)
+        {
+            return Unauthorized();
+        }
+
+        var loan = await _dbContext.Loans.FirstOrDefaultAsync(l => l.Id == loanId, cancellationToken);
+        if (loan == null)
+        {
+            return NotFound("Loan not found.");
+        }
+
+        await _rbacService.EnsureEntityPermissionAsync(_currentUser.UserId.Value, loan.EntityId, PermissionAction.Attachments);
+
+        var stored = await _storageService.SaveAsync(_dbContext.TenantId!.Value, LoanObjectType, loan.Id, file, cancellationToken);
+        var attachment = new Attachment
+        {
+            Id = Guid.NewGuid(),
+            LinkedObjectType = LoanObjectType,
+            LinkedObjectId = loan.Id,
+            FileName = stored.FileName,
+            ContentType = stored.ContentType,
+            SizeBytes = stored.SizeBytes,
+            StoragePath = stored.StoragePath,
+            UploadedBy = _currentUser.UserId.Value,
+            UploadedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.Attachments.Add(attachment);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _auditLogger.LogAsync("attachment.uploaded", _currentUser.UserId.Value, _dbContext.TenantId!.Value, "Attachment", attachment.Id);
+
+        return CreatedAtAction(nameof(DownloadAttachment), new { attachmentId = attachment.Id }, new AttachmentResponse(
+            attachment.Id,
+            attachment.FileName,
+            attachment.ContentType,
+            attachment.SizeBytes,
+            attachment.UploadedAtUtc));
+    }
+
+    [HttpPost("insurance-policies/{policyId:guid}/attachments")]
+    public async Task<ActionResult<AttachmentResponse>> UploadPolicyAttachment(Guid policyId, IFormFile file, CancellationToken cancellationToken)
+    {
+        if (!_currentUser.UserId.HasValue)
+        {
+            return Unauthorized();
+        }
+
+        var policy = await _dbContext.InsurancePolicies.FirstOrDefaultAsync(p => p.Id == policyId, cancellationToken);
+        if (policy == null)
+        {
+            return NotFound("Policy not found.");
+        }
+
+        await _rbacService.EnsureEntityPermissionAsync(_currentUser.UserId.Value, policy.EntityId, PermissionAction.Attachments);
+
+        var stored = await _storageService.SaveAsync(_dbContext.TenantId!.Value, InsurancePolicyObjectType, policy.Id, file, cancellationToken);
+        var attachment = new Attachment
+        {
+            Id = Guid.NewGuid(),
+            LinkedObjectType = InsurancePolicyObjectType,
+            LinkedObjectId = policy.Id,
+            FileName = stored.FileName,
+            ContentType = stored.ContentType,
+            SizeBytes = stored.SizeBytes,
+            StoragePath = stored.StoragePath,
+            UploadedBy = _currentUser.UserId.Value,
+            UploadedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.Attachments.Add(attachment);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _auditLogger.LogAsync("attachment.uploaded", _currentUser.UserId.Value, _dbContext.TenantId!.Value, "Attachment", attachment.Id);
+
+        return CreatedAtAction(nameof(DownloadAttachment), new { attachmentId = attachment.Id }, new AttachmentResponse(
+            attachment.Id,
+            attachment.FileName,
+            attachment.ContentType,
+            attachment.SizeBytes,
+            attachment.UploadedAtUtc));
+    }
+
     [HttpGet("attachments/{attachmentId:guid}")]
     public async Task<IActionResult> DownloadAttachment(Guid attachmentId, CancellationToken cancellationToken)
     {
@@ -102,6 +188,26 @@ public class AttachmentsController : ControllerBase
             }
 
             await _rbacService.EnsureEntityPermissionAsync(_currentUser.UserId.Value, transaction.EntityId, PermissionAction.View);
+        }
+        else if (attachment.LinkedObjectType == LoanObjectType)
+        {
+            var loan = await _dbContext.Loans.FirstOrDefaultAsync(l => l.Id == attachment.LinkedObjectId, cancellationToken);
+            if (loan == null)
+            {
+                return NotFound("Linked loan not found.");
+            }
+
+            await _rbacService.EnsureEntityPermissionAsync(_currentUser.UserId.Value, loan.EntityId, PermissionAction.View);
+        }
+        else if (attachment.LinkedObjectType == InsurancePolicyObjectType)
+        {
+            var policy = await _dbContext.InsurancePolicies.FirstOrDefaultAsync(p => p.Id == attachment.LinkedObjectId, cancellationToken);
+            if (policy == null)
+            {
+                return NotFound("Linked policy not found.");
+            }
+
+            await _rbacService.EnsureEntityPermissionAsync(_currentUser.UserId.Value, policy.EntityId, PermissionAction.View);
         }
 
         if (!System.IO.File.Exists(attachment.StoragePath))

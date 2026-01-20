@@ -29,6 +29,14 @@ public class AppDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<UserRecoveryCode> UserRecoveryCodes => Set<UserRecoveryCode>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<Reminder> Reminders => Set<Reminder>();
+    public DbSet<TenantSmtpSetting> TenantSmtpSettings => Set<TenantSmtpSetting>();
+    public DbSet<Loan> Loans => Set<Loan>();
+    public DbSet<InsurancePolicy> InsurancePolicies => Set<InsurancePolicy>();
+    public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<TaxDeadline> TaxDeadlines => Set<TaxDeadline>();
+    public DbSet<Goal> Goals => Set<Goal>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -133,6 +141,97 @@ public class AppDbContext : DbContext
             entity.Property(x => x.IpAddress).HasMaxLength(100);
             entity.Property(x => x.UserAgent).HasMaxLength(300);
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<Notification>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Message).HasMaxLength(1000).IsRequired();
+            entity.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(50);
+            entity.HasIndex(x => new { x.TenantId, x.UserId, x.AvailableAtUtc });
+        });
+
+        modelBuilder.Entity<Reminder>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(50);
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            entity.Property(x => x.Message).HasMaxLength(1000);
+            entity.HasIndex(x => new { x.TenantId, x.UserId });
+            entity.HasIndex(x => new { x.TenantId, x.DueDate });
+        });
+
+        modelBuilder.Entity<TenantSmtpSetting>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Host).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Username).HasMaxLength(200);
+            entity.Property(x => x.Password).HasMaxLength(200);
+            entity.Property(x => x.DefaultFrom).HasMaxLength(200);
+            entity.HasIndex(x => new { x.TenantId }).IsUnique();
+        });
+
+        modelBuilder.Entity<Loan>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Direction).HasConversion<string>().HasMaxLength(20);
+            entity.Property(x => x.OriginalCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.OriginalAmount).HasPrecision(18, 2);
+            entity.Property(x => x.FxRateUsed).HasPrecision(18, 6);
+            entity.Property(x => x.BaseAmount).HasPrecision(18, 2);
+            entity.Property(x => x.EmiAmount).HasPrecision(18, 2);
+            entity.HasIndex(x => new { x.TenantId, x.EntityId });
+            entity.HasIndex(x => new { x.TenantId, x.NextDueDate });
+        });
+
+        modelBuilder.Entity<InsurancePolicy>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProviderName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.PolicyNumber).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.OriginalCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.OriginalPremium).HasPrecision(18, 2);
+            entity.Property(x => x.FxRateUsed).HasPrecision(18, 6);
+            entity.Property(x => x.BasePremium).HasPrecision(18, 2);
+            entity.HasIndex(x => new { x.TenantId, x.EntityId });
+            entity.HasIndex(x => new { x.TenantId, x.RenewalDate });
+        });
+
+        modelBuilder.Entity<Subscription>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.OriginalCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.OriginalAmount).HasPrecision(18, 2);
+            entity.Property(x => x.FxRateUsed).HasPrecision(18, 6);
+            entity.Property(x => x.BaseAmount).HasPrecision(18, 2);
+            entity.Property(x => x.Frequency).HasMaxLength(40);
+            entity.HasIndex(x => new { x.TenantId, x.EntityId });
+            entity.HasIndex(x => new { x.TenantId, x.NextDueDate });
+        });
+
+        modelBuilder.Entity<TaxDeadline>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(500);
+            entity.HasIndex(x => new { x.TenantId, x.EntityId });
+            entity.HasIndex(x => new { x.TenantId, x.DueDate });
+        });
+
+        modelBuilder.Entity<Goal>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(x => x.OriginalCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.OriginalTargetAmount).HasPrecision(18, 2);
+            entity.Property(x => x.FxRateUsed).HasPrecision(18, 6);
+            entity.Property(x => x.BaseTargetAmount).HasPrecision(18, 2);
+            entity.HasIndex(x => new { x.TenantId, x.EntityId });
+            entity.HasIndex(x => new { x.TenantId, x.CheckInDate });
         });
 
         modelBuilder.Entity<UserSession>(entity =>

@@ -92,12 +92,103 @@ type FxRate = {
   rate: number
 }
 
+type Notification = {
+  id: string
+  title: string
+  message: string
+  sourceType:
+    | 'EmiDue'
+    | 'CreditCardBillDue'
+    | 'InsuranceRenewal'
+    | 'SubscriptionUpcoming'
+    | 'TaxDeadline'
+    | 'LendingFollowUp'
+    | 'GoalCheckIn'
+    | 'MissingValuation'
+  sourceId?: string | null
+  availableAtUtc: string
+  readAtUtc?: string | null
+}
+
+type Loan = {
+  id: string
+  entityId: string
+  direction: 'Given' | 'Taken'
+  name: string
+  lenderUserId: string
+  borrowerName?: string | null
+  originalCurrency: string
+  originalAmount: number
+  fxRateUsed?: number | null
+  baseAmount: number
+  nextDueDate?: string | null
+  emiAmount?: number | null
+  isActive: boolean
+}
+
+type InsurancePolicy = {
+  id: string
+  entityId: string
+  providerName: string
+  policyNumber: string
+  originalCurrency: string
+  originalPremium: number
+  fxRateUsed?: number | null
+  basePremium: number
+  renewalDate: string
+}
+
+type Subscription = {
+  id: string
+  entityId: string
+  name: string
+  originalCurrency: string
+  originalAmount: number
+  fxRateUsed?: number | null
+  baseAmount: number
+  nextDueDate: string
+  frequency: string
+  isActive: boolean
+}
+
+type TaxDeadline = {
+  id: string
+  entityId: string
+  name: string
+  dueDate: string
+  description?: string | null
+}
+
+type Goal = {
+  id: string
+  entityId: string
+  name: string
+  originalCurrency: string
+  originalTargetAmount: number
+  fxRateUsed?: number | null
+  baseTargetAmount: number
+  checkInDate: string
+  status: 'Active' | 'Completed' | 'Paused'
+}
+
 const defaultLoginState = {
   tenantSlug: '',
   email: '',
   password: '',
   totpCode: '',
   recoveryCode: '',
+}
+
+const decodeUserId = (jwt: string | null) => {
+  if (!jwt) return null
+  try {
+    const payload = jwt.split('.')[1]
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const decoded = JSON.parse(atob(normalized))
+    return decoded.user_id as string | undefined
+  } catch {
+    return null
+  }
 }
 
 function App() {
@@ -114,6 +205,12 @@ function App() {
   const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [fxRates, setFxRates] = useState<FxRate[]>([])
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [loans, setLoans] = useState<Loan[]>([])
+  const [policies, setPolicies] = useState<InsurancePolicy[]>([])
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  const [taxDeadlines, setTaxDeadlines] = useState<TaxDeadline[]>([])
+  const [goals, setGoals] = useState<Goal[]>([])
 
   const [newGroupName, setNewGroupName] = useState('')
   const [entityForm, setEntityForm] = useState({
@@ -136,6 +233,44 @@ function App() {
     baseCurrency: 'INR',
     quoteCurrency: '',
     rate: '',
+  })
+  const [loanForm, setLoanForm] = useState({
+    direction: 'Given' as Loan['direction'],
+    name: '',
+    borrowerName: '',
+    originalCurrency: 'INR',
+    originalAmount: '',
+    fxRateUsed: '',
+    nextDueDate: new Date().toISOString().slice(0, 10),
+    emiAmount: '',
+  })
+  const [policyForm, setPolicyForm] = useState({
+    providerName: '',
+    policyNumber: '',
+    originalCurrency: 'INR',
+    originalPremium: '',
+    fxRateUsed: '',
+    renewalDate: new Date().toISOString().slice(0, 10),
+  })
+  const [subscriptionForm, setSubscriptionForm] = useState({
+    name: '',
+    originalCurrency: 'INR',
+    originalAmount: '',
+    fxRateUsed: '',
+    nextDueDate: new Date().toISOString().slice(0, 10),
+    frequency: 'Monthly',
+  })
+  const [taxDeadlineForm, setTaxDeadlineForm] = useState({
+    name: '',
+    dueDate: new Date().toISOString().slice(0, 10),
+    description: '',
+  })
+  const [goalForm, setGoalForm] = useState({
+    name: '',
+    originalCurrency: 'INR',
+    originalTargetAmount: '',
+    fxRateUsed: '',
+    checkInDate: new Date().toISOString().slice(0, 10),
   })
   const [transactionForm, setTransactionForm] = useState({
     entityId: '',
@@ -206,6 +341,50 @@ function App() {
       .catch((error: Error) => setStatusMessage(error.message))
   }, [token, selectedEntityId])
 
+  useEffect(() => {
+    if (!token) {
+      return
+    }
+
+    apiRequest<Notification[]>('/api/notifications', {}, token)
+      .then(setNotifications)
+      .catch(() => undefined)
+  }, [token])
+
+  useEffect(() => {
+    if (!token || !selectedEntityId) {
+      return
+    }
+
+    void Promise.all([
+      apiRequest<Loan[]>(`/api/loans?entityId=${selectedEntityId}`, {}, token),
+      apiRequest<InsurancePolicy[]>(
+        `/api/insurance-policies?entityId=${selectedEntityId}`,
+        {},
+        token,
+      ),
+      apiRequest<Subscription[]>(
+        `/api/subscriptions?entityId=${selectedEntityId}`,
+        {},
+        token,
+      ),
+      apiRequest<TaxDeadline[]>(
+        `/api/tax-deadlines?entityId=${selectedEntityId}`,
+        {},
+        token,
+      ),
+      apiRequest<Goal[]>(`/api/goals?entityId=${selectedEntityId}`, {}, token),
+    ])
+      .then(([loanResponse, policyResponse, subscriptionResponse, deadlineResponse, goalResponse]) => {
+        setLoans(loanResponse)
+        setPolicies(policyResponse)
+        setSubscriptions(subscriptionResponse)
+        setTaxDeadlines(deadlineResponse)
+        setGoals(goalResponse)
+      })
+      .catch(() => undefined)
+  }, [token, selectedEntityId])
+
   const chartData = useMemo(() => {
     const totals = new Map<string, number>()
     transactions.forEach((tx) => {
@@ -245,6 +424,14 @@ function App() {
     setToken(null)
     setUser(null)
     localStorage.removeItem('nivi_token')
+  }
+
+  const ensureEntitySelected = () => {
+    if (!selectedEntityId) {
+      setStatusMessage('Select an entity first.')
+      return false
+    }
+    return true
   }
 
   const handleCreateGroup = async () => {
@@ -350,6 +537,141 @@ function App() {
     )
     setFxRates((prev) => [created, ...prev])
     setFxRateForm((prev) => ({ ...prev, quoteCurrency: '', rate: '' }))
+  }
+
+  const refreshNotifications = async () => {
+    if (!token) return
+    const response = await apiRequest<Notification[]>('/api/notifications', {}, token)
+    setNotifications(response)
+  }
+
+  const handleMarkNotificationRead = async (notificationId: string) => {
+    if (!token) return
+    await apiRequest<void>(
+      `/api/notifications/${notificationId}/read`,
+      { method: 'POST' },
+      token,
+    )
+    setNotifications((prev) => prev.filter((item) => item.id !== notificationId))
+  }
+
+  const handleCreateLoan = async () => {
+    if (!token || !ensureEntitySelected()) return
+    const lenderUserId = user?.id ?? decodeUserId(token)
+    if (!lenderUserId) {
+      setStatusMessage('Missing lender user context.')
+      return
+    }
+    const payload = {
+      entityId: selectedEntityId,
+      direction: loanForm.direction,
+      name: loanForm.name,
+      lenderUserId,
+      borrowerName: loanForm.borrowerName || null,
+      originalCurrency: loanForm.originalCurrency,
+      originalAmount: Number(loanForm.originalAmount || 0),
+      fxRateUsed: loanForm.fxRateUsed ? Number(loanForm.fxRateUsed) : null,
+      nextDueDate: loanForm.nextDueDate || null,
+      emiAmount: loanForm.emiAmount ? Number(loanForm.emiAmount) : null,
+    }
+    const created = await apiRequest<Loan>(
+      '/api/loans',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token,
+    )
+    setLoans((prev) => [created, ...prev])
+    setLoanForm((prev) => ({ ...prev, name: '', borrowerName: '', originalAmount: '', fxRateUsed: '', emiAmount: '' }))
+  }
+
+  const handleCreatePolicy = async () => {
+    if (!token || !ensureEntitySelected()) return
+    const payload = {
+      entityId: selectedEntityId,
+      providerName: policyForm.providerName,
+      policyNumber: policyForm.policyNumber,
+      originalCurrency: policyForm.originalCurrency,
+      originalPremium: Number(policyForm.originalPremium || 0),
+      fxRateUsed: policyForm.fxRateUsed ? Number(policyForm.fxRateUsed) : null,
+      renewalDate: policyForm.renewalDate,
+    }
+    const created = await apiRequest<InsurancePolicy>(
+      '/api/insurance-policies',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token,
+    )
+    setPolicies((prev) => [created, ...prev])
+    setPolicyForm((prev) => ({ ...prev, providerName: '', policyNumber: '', originalPremium: '', fxRateUsed: '' }))
+  }
+
+  const handleCreateSubscription = async () => {
+    if (!token || !ensureEntitySelected()) return
+    const payload = {
+      entityId: selectedEntityId,
+      name: subscriptionForm.name,
+      originalCurrency: subscriptionForm.originalCurrency,
+      originalAmount: Number(subscriptionForm.originalAmount || 0),
+      fxRateUsed: subscriptionForm.fxRateUsed ? Number(subscriptionForm.fxRateUsed) : null,
+      nextDueDate: subscriptionForm.nextDueDate,
+      frequency: subscriptionForm.frequency,
+    }
+    const created = await apiRequest<Subscription>(
+      '/api/subscriptions',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token,
+    )
+    setSubscriptions((prev) => [created, ...prev])
+    setSubscriptionForm((prev) => ({ ...prev, name: '', originalAmount: '', fxRateUsed: '' }))
+  }
+
+  const handleCreateTaxDeadline = async () => {
+    if (!token || !ensureEntitySelected()) return
+    const payload = {
+      entityId: selectedEntityId,
+      name: taxDeadlineForm.name,
+      dueDate: taxDeadlineForm.dueDate,
+      description: taxDeadlineForm.description || null,
+    }
+    const created = await apiRequest<TaxDeadline>(
+      '/api/tax-deadlines',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token,
+    )
+    setTaxDeadlines((prev) => [created, ...prev])
+    setTaxDeadlineForm((prev) => ({ ...prev, name: '', description: '' }))
+  }
+
+  const handleCreateGoal = async () => {
+    if (!token || !ensureEntitySelected()) return
+    const payload = {
+      entityId: selectedEntityId,
+      name: goalForm.name,
+      originalCurrency: goalForm.originalCurrency,
+      originalTargetAmount: Number(goalForm.originalTargetAmount || 0),
+      fxRateUsed: goalForm.fxRateUsed ? Number(goalForm.fxRateUsed) : null,
+      checkInDate: goalForm.checkInDate,
+    }
+    const created = await apiRequest<Goal>(
+      '/api/goals',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token,
+    )
+    setGoals((prev) => [created, ...prev])
+    setGoalForm((prev) => ({ ...prev, name: '', originalTargetAmount: '', fxRateUsed: '' }))
   }
 
   if (!token) {
@@ -812,9 +1134,436 @@ function App() {
               </button>
             </div>
           </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Create Loan</h2>
+            <p className="text-sm text-slate-500">
+              Uses the currently selected entity for scope.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <select
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                value={loanForm.direction}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({
+                    ...prev,
+                    direction: event.target.value as Loan['direction'],
+                  }))
+                }
+              >
+                <option value="Given">Given</option>
+                <option value="Taken">Taken</option>
+              </select>
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Loan name"
+                value={loanForm.name}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Borrower name"
+                value={loanForm.borrowerName}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({
+                    ...prev,
+                    borrowerName: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Currency"
+                value={loanForm.originalCurrency}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({
+                    ...prev,
+                    originalCurrency: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Principal amount"
+                value={loanForm.originalAmount}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({
+                    ...prev,
+                    originalAmount: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="FX rate (if needed)"
+                value={loanForm.fxRateUsed}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({ ...prev, fxRateUsed: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                type="date"
+                value={loanForm.nextDueDate}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({ ...prev, nextDueDate: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="EMI amount (optional)"
+                value={loanForm.emiAmount}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({ ...prev, emiAmount: event.target.value }))
+                }
+              />
+              <button
+                className="col-span-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                onClick={handleCreateLoan}
+              >
+                Add loan
+              </button>
+            </div>
+            <ul className="mt-4 space-y-2 text-xs text-slate-600">
+              {loans.slice(0, 3).map((loan) => (
+                <li key={loan.id} className="rounded-lg border border-slate-200 px-3 py-2">
+                  {loan.name} · {loan.direction} · {loan.originalCurrency}{' '}
+                  {loan.originalAmount}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Create Insurance Policy
+            </h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Provider"
+                value={policyForm.providerName}
+                onChange={(event) =>
+                  setPolicyForm((prev) => ({
+                    ...prev,
+                    providerName: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Policy number"
+                value={policyForm.policyNumber}
+                onChange={(event) =>
+                  setPolicyForm((prev) => ({
+                    ...prev,
+                    policyNumber: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Currency"
+                value={policyForm.originalCurrency}
+                onChange={(event) =>
+                  setPolicyForm((prev) => ({
+                    ...prev,
+                    originalCurrency: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Premium amount"
+                value={policyForm.originalPremium}
+                onChange={(event) =>
+                  setPolicyForm((prev) => ({
+                    ...prev,
+                    originalPremium: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="FX rate (if needed)"
+                value={policyForm.fxRateUsed}
+                onChange={(event) =>
+                  setPolicyForm((prev) => ({ ...prev, fxRateUsed: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                type="date"
+                value={policyForm.renewalDate}
+                onChange={(event) =>
+                  setPolicyForm((prev) => ({ ...prev, renewalDate: event.target.value }))
+                }
+              />
+              <button
+                className="col-span-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                onClick={handleCreatePolicy}
+              >
+                Add policy
+              </button>
+            </div>
+            <ul className="mt-4 space-y-2 text-xs text-slate-600">
+              {policies.slice(0, 3).map((policy) => (
+                <li key={policy.id} className="rounded-lg border border-slate-200 px-3 py-2">
+                  {policy.policyNumber} · {policy.originalCurrency}{' '}
+                  {policy.originalPremium}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Create Subscription
+            </h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Subscription name"
+                value={subscriptionForm.name}
+                onChange={(event) =>
+                  setSubscriptionForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Currency"
+                value={subscriptionForm.originalCurrency}
+                onChange={(event) =>
+                  setSubscriptionForm((prev) => ({
+                    ...prev,
+                    originalCurrency: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Amount"
+                value={subscriptionForm.originalAmount}
+                onChange={(event) =>
+                  setSubscriptionForm((prev) => ({
+                    ...prev,
+                    originalAmount: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="FX rate (if needed)"
+                value={subscriptionForm.fxRateUsed}
+                onChange={(event) =>
+                  setSubscriptionForm((prev) => ({ ...prev, fxRateUsed: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                type="date"
+                value={subscriptionForm.nextDueDate}
+                onChange={(event) =>
+                  setSubscriptionForm((prev) => ({
+                    ...prev,
+                    nextDueDate: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Frequency"
+                value={subscriptionForm.frequency}
+                onChange={(event) =>
+                  setSubscriptionForm((prev) => ({
+                    ...prev,
+                    frequency: event.target.value,
+                  }))
+                }
+              />
+              <button
+                className="col-span-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                onClick={handleCreateSubscription}
+              >
+                Add subscription
+              </button>
+            </div>
+            <ul className="mt-4 space-y-2 text-xs text-slate-600">
+              {subscriptions.slice(0, 3).map((subscription) => (
+                <li
+                  key={subscription.id}
+                  className="rounded-lg border border-slate-200 px-3 py-2"
+                >
+                  {subscription.name} · {subscription.originalCurrency}{' '}
+                  {subscription.originalAmount}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Create Tax Deadline
+            </h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Deadline name"
+                value={taxDeadlineForm.name}
+                onChange={(event) =>
+                  setTaxDeadlineForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                type="date"
+                value={taxDeadlineForm.dueDate}
+                onChange={(event) =>
+                  setTaxDeadlineForm((prev) => ({
+                    ...prev,
+                    dueDate: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="col-span-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Description"
+                value={taxDeadlineForm.description}
+                onChange={(event) =>
+                  setTaxDeadlineForm((prev) => ({
+                    ...prev,
+                    description: event.target.value,
+                  }))
+                }
+              />
+              <button
+                className="col-span-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                onClick={handleCreateTaxDeadline}
+              >
+                Add deadline
+              </button>
+            </div>
+            <ul className="mt-4 space-y-2 text-xs text-slate-600">
+              {taxDeadlines.slice(0, 3).map((deadline) => (
+                <li
+                  key={deadline.id}
+                  className="rounded-lg border border-slate-200 px-3 py-2"
+                >
+                  {deadline.name} · {deadline.dueDate}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Create Goal</h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Goal name"
+                value={goalForm.name}
+                onChange={(event) =>
+                  setGoalForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Currency"
+                value={goalForm.originalCurrency}
+                onChange={(event) =>
+                  setGoalForm((prev) => ({
+                    ...prev,
+                    originalCurrency: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Target amount"
+                value={goalForm.originalTargetAmount}
+                onChange={(event) =>
+                  setGoalForm((prev) => ({
+                    ...prev,
+                    originalTargetAmount: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="FX rate (if needed)"
+                value={goalForm.fxRateUsed}
+                onChange={(event) =>
+                  setGoalForm((prev) => ({ ...prev, fxRateUsed: event.target.value }))
+                }
+              />
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                type="date"
+                value={goalForm.checkInDate}
+                onChange={(event) =>
+                  setGoalForm((prev) => ({ ...prev, checkInDate: event.target.value }))
+                }
+              />
+              <button
+                className="col-span-full rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white"
+                onClick={handleCreateGoal}
+              >
+                Add goal
+              </button>
+            </div>
+            <ul className="mt-4 space-y-2 text-xs text-slate-600">
+              {goals.slice(0, 3).map((goal) => (
+                <li key={goal.id} className="rounded-lg border border-slate-200 px-3 py-2">
+                  {goal.name} · {goal.checkInDate}
+                </li>
+              ))}
+            </ul>
+          </div>
         </section>
 
         <aside className="space-y-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">
+                Notifications
+              </h2>
+              <button
+                className="text-xs font-semibold text-emerald-600"
+                onClick={refreshNotifications}
+              >
+                Refresh
+              </button>
+            </div>
+            <ul className="mt-4 space-y-2 text-xs text-slate-600">
+              {notifications.length === 0 ? (
+                <li className="rounded-lg border border-slate-200 px-3 py-2">
+                  No new reminders.
+                </li>
+              ) : (
+                notifications.slice(0, 6).map((notification) => (
+                  <li
+                    key={notification.id}
+                    className="rounded-lg border border-slate-200 px-3 py-2"
+                  >
+                    <div className="text-sm font-medium text-slate-700">
+                      {notification.title}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {notification.message}
+                    </div>
+                    <button
+                      className="mt-2 text-xs font-semibold text-slate-600"
+                      onClick={() => handleMarkNotificationRead(notification.id)}
+                    >
+                      Mark read
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">
               Entities
